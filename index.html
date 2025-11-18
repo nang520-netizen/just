@@ -86,15 +86,67 @@
         .log-error { color: #ff6b6b; }
         .log-success { color: #51cf66; }
         .log-info { color: #74c0fc; }
+        /* 新增提示样式 */
+        .activation-tip {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            color: #856404;
+            display: flex;
+            align-items: center;
+        }
+        .activation-tip::before {
+            content: "⚠️";
+            margin-right: 8px;
+            font-size: 18px;
+        }
+        .connection-guide {
+            background: #e7f3ff;
+            border: 1px solid #b3d9ff;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #0056b3;
+            text-align: center;
+            line-height: 1.5;
+        }
+        .connection-guide::before {
+            content: "💡";
+            margin-right: 6px;
+        }
+        .device-selector {
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #fff3cd;
+        }
+        .device-selector label {
+            font-weight: bold;
+            color: #856404;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🌱 土壤墒情仪蓝牙检测</h1>
         
+        <div class="device-selector">
+            <label>📱 新款设备专用页面（4G土壤墒情仪）</label>
+        </div>
+
         <div class="status-card">
             <div class="status-title">连接状态</div>
             <div id="connectionStatus" class="status-value disconnected">未连接</div>
+        </div>
+
+        <!-- 🔽 新增蓝牙激活提示 -->
+        <div class="activation-tip">
+            连接前请双击底部按钮激活蓝牙
         </div>
 
         <button id="connectBtn" onclick="connectDevice()">🔵 连接设备</button>
@@ -106,6 +158,11 @@
         </div>
 
         <button id="disconnectBtn" class="warn" onclick="disconnectDevice()" disabled>🔌 断开连接</button>
+
+        <!-- 🔽 新增底部连接指引 -->
+        <div class="connection-guide">
+            请找到结尾为 数字 - 4GMTEC01 的蓝牙设备并点击即可连接
+        </div>
 
         <div id="log"></div>
     </div>
@@ -173,10 +230,6 @@
 
                 log(`发现设备: ${device.name || '未知设备'}`, 'info');
                 
-                if (!device.name || !device.name.includes('SN-4GMTEC01')) {
-                    log(`警告：设备名 "${device.name}" 与预期不符，但任尝试连接...`, 'info');
-                }
-
                 // 连接设备
                 await bluetoothManager.connect(device);
                 
@@ -197,7 +250,7 @@
             updateConnectionStatus(false);
         }
 
-        // 开始测量（修复版）
+        // 开始测量
         async function measureData() {
             if (isMeasuring) return;
             
@@ -210,10 +263,9 @@
                 log('正在获取传感器数据...', 'info');
                 const result = await bluetoothManager.getSensorData();
                 
-                console.log('完整测量结果:', result);
+                console.log('测量结果:', result);
                 log(`原始数据: ${JSON.stringify(result)}`, 'info');
                 
-                // ✅ 严格验证
                 if (result && Array.isArray(result.data)) {
                     displaySensorData(result);
                     log('测量完成', 'success');
@@ -221,7 +273,7 @@
                     throw new Error(`数据格式错误：result.data 不是有效数组。实际数据: ${JSON.stringify(result)}`);
                 }
             } catch (error) {
-                console.error('测量失败:', error);
+                console.error('测量失败', error);
                 log(`测量失败: ${error.message}`, 'error');
                 alert(`测量失败: ${error.message}`);
             } finally {
@@ -231,7 +283,7 @@
             }
         }
 
-        // 显示传感器数据（增强版）
+        // 显示传感器数据
         function displaySensorData(result) {
             if (!result) {
                 log('显示数据失败: result 为 null/undefined', 'error');
@@ -256,7 +308,7 @@
                 item.className = 'sensor-item';
                 item.innerHTML = `
                     <span class="sensor-label">${label}:</span>
-                    <span class="sensor-value">${value !== null ? value.toFixed(3) : '❌ 离线/错误'}</span>
+                    <span class="sensor-value">${value !== null ? value.toFixed(3) : '❌ 错误'}</span>
                 `;
                 sensorDataDiv.appendChild(item);
             });
