@@ -166,16 +166,20 @@
 
                 log('正在搜索设备...', 'info');
                 
-                // 请求设备
+                // 🔧 修复：接受所有设备，不过滤名称（因为 test-scan.html 能搜到）
                 const device = await navigator.bluetooth.requestDevice({
-                    filters: [
-                        { namePrefix: 'SN-4GMTEC01' }
-                    ],
+                    acceptAllDevices: true,
                     optionalServices: ['49535343-fe7d-4ae5-8fa9-9fafd205e455']
                 });
 
-                log(`发现设备: ${device.name}`, 'success');
+                // 🔍 验证设备名称
+                log(`发现设备: ${device.name || '未知设备'}`, 'info');
                 
+                // 如果设备名不匹配，给出警告但仍允许连接
+                if (!device.name || !device.name.includes('SN-4GMTEC01')) {
+                    log(`警告：设备名 "${device.name}" 与预期不符，但任尝试连接...`, 'info');
+                }
+
                 // 连接设备
                 await bluetoothManager.connect(device);
                 
