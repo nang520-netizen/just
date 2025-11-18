@@ -166,16 +166,13 @@
 
                 log('正在搜索设备...', 'info');
                 
-                // 🔧 修复：接受所有设备，不过滤名称（因为 test-scan.html 能搜到）
                 const device = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
                     optionalServices: ['49535343-fe7d-4ae5-8fa9-9fafd205e455']
                 });
 
-                // 🔍 验证设备名称
                 log(`发现设备: ${device.name || '未知设备'}`, 'info');
                 
-                // 如果设备名不匹配，给出警告但仍允许连接
                 if (!device.name || !device.name.includes('SN-4GMTEC01')) {
                     log(`警告：设备名 "${device.name}" 与预期不符，但任尝试连接...`, 'info');
                 }
@@ -200,7 +197,7 @@
             updateConnectionStatus(false);
         }
 
-        // 开始测量
+        // 开始测量（修复版）
         async function measureData() {
             if (isMeasuring) return;
             
@@ -213,13 +210,18 @@
                 log('正在获取传感器数据...', 'info');
                 const result = await bluetoothManager.getSensorData();
                 
-                if (result && result.data) {
-                    displaySensorData(result.data);
+                console.log('完整测量结果:', result);
+                log(`原始数据: ${JSON.stringify(result)}`, 'info');
+                
+                // ✅ 严格验证
+                if (result && Array.isArray(result.data)) {
+                    displaySensorData(result);
                     log('测量完成', 'success');
                 } else {
-                    throw new Error('数据格式错误');
+                    throw new Error(`数据格式错误：result.data 不是有效数组。实际数据: ${JSON.stringify(result)}`);
                 }
             } catch (error) {
+                console.error('测量失败:', error);
                 log(`测量失败: ${error.message}`, 'error');
                 alert(`测量失败: ${error.message}`);
             } finally {
@@ -229,34 +231,38 @@
             }
         }
 
+        // 显示传感器数据（增强版）
+        function displaySensorData(result) {
+            if (!result) {
+                log('显示数据失败: result 为 null/undefined', 'error');
+                return;
+            }
+            
+            if (!Array.isArray(result.data)) {
+                log(`显示数据失败: result.data 不是数组。实际值: ${JSON.stringify(result.data)}`, 'error');
+                return;
+            }
 
-// 找到 index.html 中的 displaySensorData 函数，替换为：
-
-// 显示传感器数据（支持标签）
-function displaySensorData(result) {
-    const resultCard = document.getElementById('resultCard');
-    const sensorDataDiv = document.getElementById('sensorData');
-    
-    sensorDataDiv.innerHTML = '';
-    
-    // 使用返回的 labels 或默认索引
-    const labels = result.labels || [];
-    
-    result.data.forEach((value, index) => {
-        const label = labels[index] || `传感器 ${index + 1}`;
-        const item = document.createElement('div');
-        item.className = 'sensor-item';
-        item.innerHTML = `
-            <span class="sensor-label">${label}:</span>
-            <span class="sensor-value">${value !== null ? value.toFixed(3) : '❌ 离线/错误'}</span>
-        `;
-        sensorDataDiv.appendChild(item);
-    });
-    
-    resultCard.style.display = 'block';
-}
+            const resultCard = document.getElementById('resultCard');
+            const sensorDataDiv = document.getElementById('sensorData');
+            
+            sensorDataDiv.innerHTML = '';
+            
+            const labels = result.labels || [];
+            
+            result.data.forEach((value, index) => {
+                const label = labels[index] || `传感器 ${index + 1}`;
+                const item = document.createElement('div');
+                item.className = 'sensor-item';
+                item.innerHTML = `
+                    <span class="sensor-label">${label}:</span>
+                    <span class="sensor-value">${value !== null ? value.toFixed(3) : '❌ 离线/错误'}</span>
+                `;
+                sensorDataDiv.appendChild(item);
+            });
+            
+            resultCard.style.display = 'block';
+        }
     </script>
 </body>
-
 </html>
-
