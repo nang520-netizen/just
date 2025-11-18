@@ -31,7 +31,7 @@ class BluetoothManager {
             
             // 获取主服务
             this.service = await this.server.getPrimaryService(this.config.serviceUuid);
-            console.log('获取服务成功:', this.config.serviceUuid);
+            console.log('获取服务成功');
             
             // 获取写特征值
             this.writeChar = await this.service.getCharacteristic(this.config.writeCharUuid);
@@ -46,7 +46,7 @@ class BluetoothManager {
             this.notifyChar.addEventListener('characteristicvaluechanged', this.handleData.bind(this));
             
             // 监听设备断开
-            device.addEventListener('gattserverdisconnected', this.handleDisconnect.bind(this));
+            this.device.addEventListener('gattserverdisconnected', this.handleDisconnect.bind(this));
             
             this.isConnected = true;
             return true;
