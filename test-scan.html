@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head><title>蓝牙扫描测试</title></head>
+<body>
+    <button onclick="testScan()">开始扫描蓝牙设备</button>
+    <div id="result"></div>
+    
+    <script>
+        async function testScan() {
+            if (!navigator.bluetooth) {
+                alert('浏览器不支持蓝牙API');
+                return;
+            }
+            
+            try {
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true  // 接受所有设备（不过滤）
+                });
+                document.getElementById('result').innerHTML = 
+                    `发现设备：<br>名称：${device.name}<br>ID：${device.id}`;
+            } catch (err) {
+                alert('错误：' + err.message);
+            }
+        }
+    </script>
+</body>
+</html>
