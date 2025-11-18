@@ -9,6 +9,13 @@ class BluetoothManager {
         this.dataCache = '';
         this.resolveCallback = null;
         
+        // 传感器参数编号映射（根据您的设备实际调整）
+        this.sensorMap = {
+            '4102': '土壤湿度1',
+            '4108': '土壤湿度2', 
+            '4110': '土壤温度'
+        };
+        
         // 设备蓝牙配置
         this.config = {
             serviceUuid: '49535343-fe7d-4ae5-8fa9-9fafd205e455',
@@ -96,7 +103,7 @@ class BluetoothManager {
     }
 
     /**
-     * 处理蓝牙数据返回（增强版）
+     * 处理蓝牙数据返回
      */
     handleData(event) {
         const value = event.target.value;
@@ -104,11 +111,6 @@ class BluetoothManager {
         const str = decoder.decode(value);
         
         console.log('收到数据片段:', str);
-        
-        // 📝 实时显示原始数据到日志
-        if (window.log) {
-            window.log(`收到数据: "${str}"`, 'info');
-        }
         
         this.dataCache += str;
         
@@ -127,7 +129,6 @@ class BluetoothManager {
                     this.resolveCallback(jsonData);
                 } catch (e) {
                     console.error('JSON解析失败:', e);
-                    // 🔍 显示解析失败的原始数据
                     if (window.log) {
                         window.log(`JSON解析失败，原始数据: "${this.dataCache}"`, 'error');
                     }
@@ -149,7 +150,7 @@ class BluetoothManager {
     }
 
     /**
-     * 发送AT指令（增强版）
+     * 发送AT指令
      */
     async sendATCommand(command, data = null) {
         return new Promise((resolve, reject) => {
@@ -203,7 +204,7 @@ class BluetoothManager {
     }
 
     /**
-     * 获取传感器数据（超强调试版）
+     * 获取传感器数据（适配实际设备格式）
      */
     async getSensorData() {
         try {
@@ -216,43 +217,66 @@ class BluetoothManager {
             if (window.log) {
                 window.log(`收到完整响应: ${JSON.stringify(result)}`, 'success');
             }
-            
-            // 🔍 增强的数据格式验证
-            if (!result) {
-                throw new Error('设备返回了空数据');
+
+            // 🎯 适配新数据格式：{"4102":"24300.0","4108":"O.00","4110":"O.0"}
+            if (!result || typeof result !== 'object') {
+                throw new Error('设备返回了无效数据');
             }
+
+            // 解析所有传感器参数
+            const sensorData = [];
+            const sensorLabels = [];
             
-            if (!result.data) {
-                console.error('返回数据没有 "data" 字段:', result);
-                throw new Error(`数据格式错误：缺少 'data' 字段。原始数据: ${JSON.stringify(result)}`);
-            }
-            
-            if (!Array.isArray(result.data)) {
-                console.error('data 字段不是数组:', result.data);
-                throw new Error(`数据格式错误：'data' 必须是数组。实际类型: ${typeof result.data}`);
-            }
-            
-            // 处理数据（设备返回的值乘以1000，app需要除以1000）
-            result.data = result.data.map((value, index) => {
-                console.log(`传感器 ${index} 原始值: ${value}`);
+            for (const [key, value] of Object.entries(result)) {
+                // 跳过非传感器字段
+                if (!this.sensorMap[key]) continue;
                 
-                // 错误码处理
-                if (value === 2000001 || value === 2000003) {
+                const label = this.sensorMap[key];
+                sensorLabels.push(label);
+                
+                // 处理数值和错误状态
+                let numericValue = null;
+                
+                if (value === 'O.00' || value === 'O.0' || value === 'O') {
+                    // 固件bug：错误状态用了字母O而不是数字0
                     if (window.log) {
-                        window.log(`传感器 ${index + 1}: 测量错误`, 'error');
+                        window.log(`${label}: 传感器离线 (O错误码)`, 'error');
                     }
-                    return null; // 错误值
+                    numericValue = null;
+                } else if (value === '2000001' || value === '2000003') {
+                    // 标准错误码
+                    if (window.log) {
+                        window.log(`${label}: 测量错误 (${value})`, 'error');
+                    }
+                    numericValue = null;
+                } else {
+                    // 正常数值（字符串形式）
+                    numericValue = parseFloat(value);
+                    if (isNaN(numericValue)) {
+                        if (window.log) {
+                            window.log(`${label}: 无效数值 "${value}"`, 'error');
+                        }
+                        numericValue = null;
+                    } else {
+                        // 除以1000还原真实值
+                        numericValue = numericValue / 1000;
+                        if (window.log) {
+                            window.log(`${label}: ${numericValue.toFixed(3)}`, 'success');
+                        }
+                    }
                 }
                 
-                // 除以1000还原真实值
-                const realValue = value / 1000;
-                if (window.log) {
-                    window.log(`传感器 ${index + 1}: ${realValue.toFixed(3)}`, 'success');
-                }
-                return realValue;
-            });
-            
-            return result;
+                sensorData.push(numericValue);
+            }
+
+            if (sensorData.length === 0) {
+                throw new Error('未找到任何有效的传感器数据');
+            }
+
+            return {
+                data: sensorData,
+                labels: sensorLabels
+            };
         } catch (error) {
             console.error('获取传感器数据失败:', error);
             if (window.log) {
