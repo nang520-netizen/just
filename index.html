@@ -229,24 +229,31 @@
             }
         }
 
-        // 显示传感器数据
-        function displaySensorData(data) {
-            const resultCard = document.getElementById('resultCard');
-            const sensorDataDiv = document.getElementById('sensorData');
-            
-            sensorDataDiv.innerHTML = '';
-            data.forEach((value, index) => {
-                const item = document.createElement('div');
-                item.className = 'sensor-item';
-                item.innerHTML = `
-                    <span class="sensor-label">传感器 ${index + 1}:</span>
-                    <span class="sensor-value">${value !== null ? value.toFixed(3) : '❌ 错误'}</span>
-                `;
-                sensorDataDiv.appendChild(item);
-            });
-            
-            resultCard.style.display = 'block';
-        }
+
+// 显示传感器数据（支持标签）
+function displaySensorData(result) {
+    const resultCard = document.getElementById('resultCard');
+    const sensorDataDiv = document.getElementById('sensorData');
+    
+    sensorDataDiv.innerHTML = '';
+    
+    // 使用返回的 labels 或默认索引
+    const labels = result.labels || [];
+    
+    result.data.forEach((value, index) => {
+        const label = labels[index] || `传感器 ${index + 1}`;
+        const item = document.createElement('div');
+        item.className = 'sensor-item';
+        item.innerHTML = `
+            <span class="sensor-label">${label}:</span>
+            <span class="sensor-value">${value !== null ? value.toFixed(3) : '❌ 离线/错误'}</span>
+        `;
+        sensorDataDiv.appendChild(item);
+    });
+    
+    resultCard.style.display = 'block';
+}
     </script>
 </body>
+
 </html>
