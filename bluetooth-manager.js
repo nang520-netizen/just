@@ -11,9 +11,9 @@ class BluetoothManager {
         
         // 传感器参数编号映射（根据您的设备实际调整）
         this.sensorMap = {
-            '4102': '土壤湿度1',
-            '4108': '土壤湿度2', 
-            '4110': '土壤温度'
+            '4102': '土壤温度',
+            '4108': '电导率', 
+            '4110': '土壤水分'
         };
         
         // 设备蓝牙配置
@@ -317,3 +317,4 @@ class BluetoothManager {
 
 // 创建全局实例
 const bluetoothManager = new BluetoothManager();
+
