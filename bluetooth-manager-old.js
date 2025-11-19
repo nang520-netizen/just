@@ -11,8 +11,8 @@ class BluetoothManager {
         
         // ✅ Seeed文档标准参数映射
         this.sensorMap = {
-            '4102': { name: '土壤湿度', unit: '%', factor: 1000 },
-            '4103': { name: '土壤温度', unit: '℃', factor: 1000 },
+            '4103': { name: '土壤水分', unit: '%', factor: 1000 },
+            '4102': { name: '土壤温度', unit: '℃', factor: 1000 },
             '4104': { name: '电池电量', unit: '%', factor: 1 },
             '4108': { name: '土壤电导率', unit: 'μS/cm', factor: 1000 },
             '4110': { name: '土壤pH值', unit: 'pH', factor: 100 }
