@@ -9,13 +9,13 @@ class BluetoothManager {
         this.dataCache = '';
         this.resolveCallback = null;
         
-        // ✅ Seeed文档标准参数映射（含修正因子）
+        // ✅ Seeed文档标准参数映射
         this.sensorMap = {
-            '4102': { name: '土壤湿度', unit: '%', factor: 1000, key: 'soil_moisture' },
-            '4103': { name: '土壤温度', unit: '℃', factor: 1000, key: 'soil_temperature' },
-            '4104': { name: '电池电量', unit: '%', factor: 1, key: 'battery' },
-            '4108': { name: '土壤电导率', unit: 'μS/cm', factor: 1000, key: 'conductivity' },
-            '4110': { name: '土壤pH值', unit: 'pH', factor: 100, key: 'ph' }
+            '4102': { name: '土壤湿度', unit: '%', factor: 1000 },
+            '4103': { name: '土壤温度', unit: '℃', factor: 1000 },
+            '4104': { name: '电池电量', unit: '%', factor: 1 },
+            '4108': { name: '土壤电导率', unit: 'μS/cm', factor: 1000 },
+            '4110': { name: '土壤pH值', unit: 'pH', factor: 100 }
         };
     }
 
@@ -91,7 +91,7 @@ class BluetoothManager {
     }
 
     /**
-     * 处理蓝牙数据返回（超强纠错版）
+     * 处理蓝牙数据返回（跳过JSON解析）
      */
     handleData(event) {
         const value = event.target.value;
@@ -110,111 +110,86 @@ class BluetoothManager {
         if (completeFlag.test(this.dataCache)) {
             console.log('收到完整响应，原始数据:', this.dataCache);
             
-            // 🔥 提取第一个完整的JSON对象
-            const jsonMatches = this.dataCache.match(/\{.*?\}(?=\r\nok\r\n)/gs);
+            // 🚀 直接提取键值对，不依赖JSON.parse
+            const result = this.extractKeyValuePairs(this.dataCache);
             
-            if (jsonMatches && jsonMatches.length > 0) {
-                const firstJsonStr = jsonMatches[0];
-                console.log('提取第一个JSON:', firstJsonStr);
-                
-                try {
-                    const jsonData = JSON.parse(firstJsonStr);
-                    console.log('JSON解析成功:', jsonData);
-                    if (this.resolveCallback) {
-                        this.resolveCallback(jsonData);
-                    }
-                } catch (e) {
-                    console.log('JSON解析失败，尝试恢复解析');
-                    this.parseWithRecovery(firstJsonStr);
-                }
-            } else {
-                console.log('未提取到JSON，尝试文本解析');
-                const cleanText = this.dataCache.replace(/\r\nok\r\n/g, '').trim();
-                this.parseWithRecovery(cleanText);
+            if (this.resolveCallback) {
+                this.resolveCallback(result);
             }
             
-            this.dataCache = ''; // 立即清空缓存
+            this.dataCache = '';
             this.resolveCallback = null;
         }
     }
 
     /**
-     * 恢复解析器（最终版）
+     * 从原始字符串直接提取键值对（核心函数）
      */
-    parseWithRecovery(malformedJson) {
-        console.log('开始恢复解析:', malformedJson);
+    extractKeyValuePairs(rawText) {
+        console.log('开始提取键值对，原始文本:', rawText);
         
-        if (window.log) {
-            window.log(`使用恢复解析器: "${malformedJson}"`, 'info');
+        const cleanText = rawText.replace(/\r\nok\r\n/g, '').trim();
+        console.log('清理后文本:', cleanText);
+        
+        const dataObject = {};
+        
+        // 正则表达式匹配模式：支持 "4102":"24300.0" 或 4102:24300.0 或 4102=24300.0
+        const pattern = /([0-9]{4})\s*[:=]\s*"*([A-Za-z0-9.]+)"*/g;
+        let match;
+        
+        while ((match = pattern.exec(cleanText)) !== null) {
+            const key = match[1]; // 4102, 4103 等
+            const value = match[2]; // 24300.0, O.00 等
+            
+            console.log(`提取到: ${key} = ${value}`);
+            if (window.log) {
+                window.log(`提取参数 ${key}: ${value}`, 'info');
+            }
+            
+            dataObject[key] = value;
         }
         
-        try {
-            // 步骤1：确保是有效JSON格式
-            if (!malformedJson.startsWith('{') || !malformedJson.endsWith('}')) {
-                malformedJson = `{${malformedJson}}`;
-            }
-            
-            // 步骤2：修复键名（加引号）
-            let fixed = malformedJson.replace(/([{,]\s*)([a-zA-Z0-9]+)(\s*:)/g, '$1"$2"$3');
-            
-            // 步骤3：修复值（确保是字符串）
-            fixed = fixed.replace(/:\s*([A-Za-z]+[A-Za-z0-9.]*)/g, ': "$1"');
-            fixed = fixed.replace(/:\s*(\d+\.?\d*)\s*([,}])/g, ': "$1"$2');
-            
-            // 步骤4：处理O错误码
-            fixed = fixed.replace(/:\s*"O\.?\d*"/gi, ':"ERROR"');
-            
-            console.log('修复后的JSON字符串:', fixed);
-            
-            if (window.log) {
-                window.log(`修复后JSON: ${fixed}`, 'info');
-            }
-            
-            const dataObject = JSON.parse(fixed);
-            console.log('JSON解析成功:', dataObject);
-            
-            const converted = this.convertToStandardStructure(dataObject);
-            
-            if (this.resolveCallback) {
-                this.resolveCallback(converted);
-            }
-            
-        } catch (error) {
-            console.error('恢复解析失败:', error);
-            if (window.log) {
-                window.log(`恢复解析失败: ${error.message}。原始数据: "${malformedJson}"`, 'error');
-            }
-            if (this.resolveCallback) {
-                this.resolveCallback(null, new Error(`数据修复失败：${error.message}`));
+        // 如果正则没匹配到，尝试更宽松的提取
+        if (Object.keys(dataObject).length === 0) {
+            console.log('严格模式未匹配到，尝试宽松模式');
+            const loosePattern = /([0-9]{4})\D+([0-9.A-Za-z]+)/g;
+            while ((match = loosePattern.exec(cleanText)) !== null) {
+                const key = match[1];
+                const value = match[2];
+                if (key && value) {
+                    dataObject[key] = value;
+                }
             }
         }
+        
+        console.log('提取结果:', dataObject);
+        
+        // 转换为标准结构
+        return this.convertToStructure(dataObject);
     }
 
     /**
-     * 转换为标准结构（带验证）
+     * 转换为标准结构
      */
-    convertToStandardStructure(rawData) {
-        console.log('开始转换结构，原始数据:', rawData);
+    convertToStructure(rawData) {
+        console.log('开始转换结构，提取的数据:', rawData);
+        
+        if (!rawData || Object.keys(rawData).length === 0) {
+            throw new Error('未提取到任何传感器数据');
+        }
         
         const dataArray = [];
         const labelArray = [];
         
-        // 验证输入
-        if (!rawData || typeof rawData !== 'object') {
-            throw new Error('无效的数据对象');
-        }
-        
-        // 遍历对象
-        for (const [key, value] of Object.entries(rawData)) {
-            console.log(`处理键值对: ${key} = ${value}`);
-            
-            // 验证key
+        // 遍历提取的数据
+        for (const [key, rawValue] of Object.entries(rawData)) {
+            // 验证key是否在映射表中
             const sensorInfo = this.sensorMap[key];
             
             if (!sensorInfo) {
-                console.warn(`未知参数标识符 ${key}: ${value}`);
+                console.warn(`未知参数标识符: ${key} = ${rawValue}`);
                 if (window.log) {
-                    window.log(`未知传感器参数 ${key}: ${value}`, 'info');
+                    window.log(`未知传感器参数 ${key}: ${rawValue}`, 'info');
                 }
                 continue;
             }
@@ -222,34 +197,36 @@ class BluetoothManager {
             const label = `${sensorInfo.name} (${sensorInfo.unit})`;
             labelArray.push(label);
             
-            let numericValue = null;
+            console.log(`处理 ${key}: ${rawValue} → ${label}`);
+            
+            let value = null;
             
             // 统一错误判断
             const errorCodes = ['ERROR', 'O.00', 'O.0', 'O', '2000001', '2000003', '0.00', ''];
-            if (value === null || errorCodes.includes(value)) {
-                numericValue = null;
+            if (errorCodes.includes(rawValue)) {
+                value = null;
                 if (window.log) {
                     window.log(`❌ ${label}: 传感器离线/错误`, 'error');
                 }
             } else {
                 // 转换数值
-                const numValue = parseFloat(value);
+                const numValue = parseFloat(rawValue);
                 if (isNaN(numValue)) {
-                    console.error(`无效数值: ${value}`);
-                    numericValue = null;
+                    console.error(`无效数值: ${rawValue}`);
+                    value = null;
                 } else {
-                    numericValue = numValue / sensorInfo.factor;
-                    console.log(`✅ 转换结果: ${numericValue}`);
+                    value = numValue / sensorInfo.factor;
+                    console.log(`✅ 转换结果: ${value}`);
                     if (window.log) {
-                        window.log(`${label}: ${numericValue.toFixed(3)} ${sensorInfo.unit}`, 'success');
+                        window.log(`${label}: ${value.toFixed(3)} ${sensorInfo.unit}`, 'success');
                     }
                 }
             }
             
-            dataArray.push(numericValue);
+            dataArray.push(value);
         }
-
-        // 验证结果
+        
+        // 确保有数据
         if (dataArray.length === 0) {
             throw new Error('未找到任何有效的传感器数据');
         }
@@ -310,18 +287,19 @@ class BluetoothManager {
     }
 
     /**
-     * 获取传感器数据（最终版）
+     * 获取传感器数据
      */
     async getSensorData() {
         try {
             if (window.log) {
-                window.log('正在获取传感器数据（终极修复版）...', 'info');
+                window.log('正在获取传感器数据（正则提取版）...', 'info');
             }
             
             const result = await this.sendATCommand('MEA=?');
             
             if (window.log) {
                 window.log(`完整响应: ${JSON.stringify(result)}`, 'success');
+                window.log(`有效传感器数量: ${result.data.length}`, 'success');
             }
             
             if (!result || !Array.isArray(result.data)) {
