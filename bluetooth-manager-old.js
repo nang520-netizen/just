@@ -9,11 +9,13 @@ class BluetoothManager {
         this.dataCache = '';
         this.resolveCallback = null;
         
-        // 旧款设备参数映射（根据实际调整）
+        // ✅ 基于 Seeed 文档的旧款设备参数映射
         this.sensorMap = {
-            '4102': '土壤温度',
-            '4108': '土壤电导率', 
-            '4103': '土壤水分'
+            '4102': { name: '土壤湿度', unit: '%', factor: 1000 },
+            '4103': { name: '土壤温度', unit: '℃', factor: 1000 },
+            '4104': { name: '电池电量', unit: '%', factor: 1 },
+            '4108': { name: '土壤电导率', unit: 'μS/cm', factor: 1000 },
+            '4110': { name: '土壤pH值', unit: 'pH', factor: 100 }
         };
     }
 
@@ -96,7 +98,7 @@ class BluetoothManager {
     }
 
     /**
-     * 处理蓝牙数据返回（兼容非JSON格式）
+     * 处理蓝牙数据返回（超强兼容版）
      */
     handleData(event) {
         const value = event.target.value;
@@ -116,7 +118,7 @@ class BluetoothManager {
         if (completeFlag.test(this.dataCache)) {
             console.log('收到完整响应');
             
-            // 提取JSON部分（如果有）
+            // 提取JSON部分
             let jsonMatch = this.dataCache.match(/\{.*\}/s);
             
             if (jsonMatch && this.resolveCallback) {
@@ -126,22 +128,20 @@ class BluetoothManager {
                     this.resolveCallback(jsonData);
                 } catch (e) {
                     console.log('JSON解析失败，尝试文本解析');
-                    // 🔧 旧款设备兼容：尝试作为纯文本解析
                     this.parseAsText(this.dataCache);
                 }
             } else if (this.resolveCallback) {
-                // 完全没有JSON格式，直接文本解析
                 console.log('未找到JSON，直接文本解析');
                 this.parseAsText(this.dataCache);
             }
             
-            this.dataCache = ''; // 清空缓存
+            this.dataCache = '';
             this.resolveCallback = null;
         }
     }
 
     /**
-     * 文本解析器（兼容旧款设备）
+     * 文本解析器（超强兼容）
      */
     parseAsText(rawText) {
         console.log('开始文本解析，原始数据:', rawText);
@@ -151,19 +151,13 @@ class BluetoothManager {
         }
         
         try {
-            // 尝试提取数值（支持多种格式）
-            // 格式1: {"4102":"24300.0","4108":"O.00","4110":"O.0"}（带引号）
-            // 格式2: {4102:24300.0,4108:O.00,4110:O.0}（不带引号）
-            // 格式3: 24300.0,O.0,25.1（纯CSV）
-            
             let dataObject = {};
             
-            // 方法1：尝试清理后当JSON解析
+            // 方法1：尝试修复JSON
             try {
-                // 移除可能的非法字符
-                const cleaned = rawText.replace(/([{,]\s*)(\w+):/g, '$1"$2":') // 给key加引号
-                                      .replace(/:\s*O\.?0*\s*([,}])/g, ':"O.00"$1') // 处理O错误码
-                                      .replace(/\r\nok\r\n/g, '') // 移除结束符
+                const cleaned = rawText.replace(/([{,]\s*)(\w+):/g, '$1"$2":')
+                                      .replace(/:\s*O\.?0*\s*([,}])/g, ':"O.00"$1')
+                                      .replace(/\r\nok\r\n/g, '')
                                       .trim();
                 
                 if (cleaned.startsWith('{') && cleaned.endsWith('}')) {
@@ -173,14 +167,13 @@ class BluetoothManager {
                 console.log('清理后JSON解析失败:', e);
             }
             
-            // 方法2：如果还是失败，尝试CSV解析
+            // 方法2：CSV解析
             if (Object.keys(dataObject).length === 0) {
                 const csvMatch = rawText.match(/([\d.]+|O\.?\d*)/g);
                 if (csvMatch) {
                     console.log('CSV解析成功:', csvMatch);
-                    // 给CSV数据分配默认key
+                    const keys = ['4102', '4103', '4104', '4108', '4110'];
                     csvMatch.forEach((val, idx) => {
-                        const keys = ['4102', '4108', '4110'];
                         if (keys[idx]) {
                             dataObject[keys[idx]] = val;
                         }
@@ -189,8 +182,6 @@ class BluetoothManager {
             }
             
             console.log('最终解析结果:', dataObject);
-            
-            // 转换为标准格式
             const converted = this.convertToStandardFormat(dataObject);
             
             if (this.resolveCallback) {
@@ -215,38 +206,44 @@ class BluetoothManager {
         const dataArray = [];
         const labelArray = [];
         
-        // 按已知key顺序提取
-        const keyOrder = ['4102', '4108', '4110'];
-        
-        keyOrder.forEach(key => {
-            if (rawData.hasOwnProperty(key)) {
-                const rawValue = rawData[key];
-                const label = this.sensorMap[key] || `传感器${key}`;
-                labelArray.push(label);
-                
-                let value = null;
-                
-                // 处理各种错误格式
-                if (rawValue === 'O.00' || rawValue === 'O.0' || rawValue === 'O') {
-                    // 字母O错误码
-                    value = null;
-                } else if (rawValue === '2000001' || rawValue === '2000003') {
-                    // 标准错误码
+        // 📊 动态解析所有返回的参数
+        for (const [key, rawValue] of Object.entries(rawData)) {
+            if (!this.sensorMap[key]) {
+                console.log(`未知参数 ${key}: ${rawValue}`);
+                if (window.log) {
+                    window.log(`未知传感器参数 ${key}: ${rawValue}`, 'info');
+                }
+                continue;
+            }
+
+            const sensorInfo = this.sensorMap[key];
+            labelArray.push(`${sensorInfo.name} (${sensorInfo.unit})`);
+            
+            let value = null;
+            
+            // 错误码处理
+            if (rawValue === 'O.00' || rawValue === 'O.0' || rawValue === 'O' || 
+                rawValue === '2000001' || rawValue === '2000003') {
+                value = null;
+                if (window.log) {
+                    window.log(`${sensorInfo.name}: 传感器离线/错误`, 'error');
+                }
+            } else {
+                // 正常数值转换
+                const numValue = parseFloat(rawValue);
+                if (isNaN(numValue)) {
                     value = null;
                 } else {
-                    // 正常数值
-                    value = parseFloat(rawValue);
-                    if (isNaN(value)) {
-                        value = null;
-                    } else {
-                        value = value / 1000; // 除以1000
+                    value = numValue / sensorInfo.factor;
+                    if (window.log) {
+                        window.log(`${sensorInfo.name}: ${value.toFixed(3)} ${sensorInfo.unit}`, 'success');
                     }
                 }
-                
-                dataArray.push(value);
             }
-        });
-        
+            
+            dataArray.push(value);
+        }
+
         return {
             data: dataArray,
             labels: labelArray
@@ -304,12 +301,12 @@ class BluetoothManager {
     }
 
     /**
-     * 获取传感器数据（旧款兼容版）
+     * 获取传感器数据
      */
     async getSensorData() {
         try {
             if (window.log) {
-                window.log('正在获取旧设备传感器数据（兼容模式）...', 'info');
+                window.log('正在获取传感器数据（文档标准版）...', 'info');
             }
             
             const result = await this.sendATCommand('MEA=?');
