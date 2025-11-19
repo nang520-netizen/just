@@ -9,13 +9,13 @@ class BluetoothManager {
         this.dataCache = '';
         this.resolveCallback = null;
         
-        // ✅ 基于 Seeed 文档的旧款设备参数映射
+        // ✅ Seeed文档标准参数映射（含修正因子）
         this.sensorMap = {
-            '4102': { name: '土壤湿度', unit: '%', factor: 1000 },
-            '4103': { name: '土壤温度', unit: '℃', factor: 1000 },
-            '4104': { name: '电池电量', unit: '%', factor: 1 },
-            '4108': { name: '土壤电导率', unit: 'μS/cm', factor: 1000 },
-            '4110': { name: '土壤pH值', unit: 'pH', factor: 100 }
+            '4102': { name: '土壤湿度', unit: '%', factor: 1000, type: 'moisture' },
+            '4103': { name: '土壤温度', unit: '℃', factor: 1000, type: 'temperature' },
+            '4104': { name: '电池电量', unit: '%', factor: 1, type: 'battery' },
+            '4108': { name: '土壤电导率', unit: 'μS/cm', factor: 1000, type: 'conductivity' },
+            '4110': { name: '土壤pH值', unit: 'pH', factor: 100, type: 'ph' }
         };
     }
 
@@ -27,27 +27,20 @@ class BluetoothManager {
             console.log('开始连接GATT服务器...');
             this.device = device;
             
-            // 连接GATT服务器
             this.server = await device.gatt.connect();
             console.log('GATT服务器连接成功');
             
-            // 获取主服务
             this.service = await this.server.getPrimaryService('49535343-fe7d-4ae5-8fa9-9fafd205e455');
             console.log('获取服务成功');
             
-            // 获取写特征值
             this.writeChar = await this.service.getCharacteristic('49535343-8841-43f4-a8d4-ecbe34729bb3');
             console.log('获取写特征值成功');
             
-            // 获取通知特征值并启用通知
             this.notifyChar = await this.service.getCharacteristic('49535343-1e4d-4bd9-ba61-23c647249616');
             await this.notifyChar.startNotifications();
             console.log('启动通知成功');
             
-            // 监听数据返回
             this.notifyChar.addEventListener('characteristicvaluechanged', this.handleData.bind(this));
-            
-            // 监听设备断开
             this.device.addEventListener('gattserverdisconnected', this.handleDisconnect.bind(this));
             
             this.isConnected = true;
@@ -98,7 +91,7 @@ class BluetoothManager {
     }
 
     /**
-     * 处理蓝牙数据返回（超强兼容版）
+     * 处理蓝牙数据返回（超强纠错版）
      */
     handleData(event) {
         const value = event.target.value;
@@ -113,12 +106,10 @@ class BluetoothManager {
         
         this.dataCache += str;
         
-        // 判断是否收到完整数据（以\r\nok\r\n结尾）
         const completeFlag = /\r\nok\r\n$/i;
         if (completeFlag.test(this.dataCache)) {
-            console.log('收到完整响应');
+            console.log('收到完整响应，原始数据:', this.dataCache);
             
-            // 提取JSON部分
             let jsonMatch = this.dataCache.match(/\{.*\}/s);
             
             if (jsonMatch && this.resolveCallback) {
@@ -127,12 +118,12 @@ class BluetoothManager {
                     console.log('JSON解析成功:', jsonData);
                     this.resolveCallback(jsonData);
                 } catch (e) {
-                    console.log('JSON解析失败，尝试文本解析');
-                    this.parseAsText(this.dataCache);
+                    console.log('JSON解析失败，尝试文本修复');
+                    this.parseWithTextRecovery(this.dataCache);
                 }
             } else if (this.resolveCallback) {
-                console.log('未找到JSON，直接文本解析');
-                this.parseAsText(this.dataCache);
+                console.log('未找到JSON，使用文本修复');
+                this.parseWithTextRecovery(this.dataCache);
             }
             
             this.dataCache = '';
@@ -141,57 +132,59 @@ class BluetoothManager {
     }
 
     /**
-     * 文本解析器（超强兼容）
+     * 文本修复解析器（核心修复）
      */
-    parseAsText(rawText) {
-        console.log('开始文本解析，原始数据:', rawText);
+    parseWithTextRecovery(rawText) {
+        console.log('开始文本修复解析，原始数据:', rawText);
         
         if (window.log) {
-            window.log(`使用文本解析器: "${rawText}"`, 'info');
+            window.log(`使用修复解析器: "${rawText}"`, 'info');
         }
         
         try {
-            let dataObject = {};
+            let dataObject = null;
             
-            // 方法1：尝试修复JSON
+            // 🔧 方法1：强力JSON修复
             try {
-                const cleaned = rawText.replace(/([{,]\s*)(\w+):/g, '$1"$2":')
-                                      .replace(/:\s*O\.?0*\s*([,}])/g, ':"O.00"$1')
-                                      .replace(/\r\nok\r\n/g, '')
-                                      .trim();
+                // 步骤1：移除结束符和空白
+                let cleaned = rawText.replace(/\r\nok\r\n/g, '').trim();
+                
+                // 步骤2：修复未加引号的key
+                cleaned = cleaned.replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3');
+                
+                // 步骤3：修复单引号为双引号
+                cleaned = cleaned.replace(/'/g, '"');
+                
+                // 步骤4：修复O错误码（字母O替换为字符串"ERROR"）
+                cleaned = cleaned.replace(/:\s*"*O\.?\d*"*/g, ':"ERROR"');
+                
+                // 步骤5：修复数值格式（确保小数点正确）
+                cleaned = cleaned.replace(/,\s*([}\]])/g, '"":null$1'); // 处理空值
+                
+                console.log('修复后的JSON字符串:', cleaned);
                 
                 if (cleaned.startsWith('{') && cleaned.endsWith('}')) {
                     dataObject = JSON.parse(cleaned);
+                    console.log('修复后JSON解析成功:', dataObject);
                 }
             } catch (e) {
-                console.log('清理后JSON解析失败:', e);
+                console.log('JSON修复失败:', e);
             }
             
-            // 方法2：CSV解析
-            if (Object.keys(dataObject).length === 0) {
-                const csvMatch = rawText.match(/([\d.]+|O\.?\d*)/g);
-                if (csvMatch) {
-                    console.log('CSV解析成功:', csvMatch);
-                    const keys = ['4102', '4103', '4104', '4108', '4110'];
-                    csvMatch.forEach((val, idx) => {
-                        if (keys[idx]) {
-                            dataObject[keys[idx]] = val;
-                        }
-                    });
+            // 如果修复成功，转换为标准格式
+            if (dataObject && Object.keys(dataObject).length > 0) {
+                const converted = this.convertToStandardFormat(dataObject);
+                if (this.resolveCallback) {
+                    this.resolveCallback(converted);
                 }
-            }
-            
-            console.log('最终解析结果:', dataObject);
-            const converted = this.convertToStandardFormat(dataObject);
-            
-            if (this.resolveCallback) {
-                this.resolveCallback(converted);
+            } else {
+                throw new Error('数据修复失败，无法识别设备数据格式');
             }
             
         } catch (error) {
-            console.error('文本解析失败:', error);
+            console.error('文本修复解析失败:', error);
             if (window.log) {
-                window.log(`文本解析失败: ${error.message}`, 'error');
+                window.log(`修复解析失败: ${error.message}`, 'error');
             }
             if (this.resolveCallback) {
                 this.resolveCallback(null, error);
@@ -200,43 +193,52 @@ class BluetoothManager {
     }
 
     /**
-     * 转换为标准格式
+     * 转换为标准格式（带调试日志）
      */
     convertToStandardFormat(rawData) {
+        console.log('开始转换，原始数据对象:', rawData);
+        
         const dataArray = [];
         const labelArray = [];
         
-        // 📊 动态解析所有返回的参数
+        // 遍历原始数据
         for (const [key, rawValue] of Object.entries(rawData)) {
+            // ✅ 验证key是否在映射表中
             if (!this.sensorMap[key]) {
-                console.log(`未知参数 ${key}: ${rawValue}`);
+                console.warn(`跳过未知参数 ${key}: ${rawValue}`);
                 if (window.log) {
-                    window.log(`未知传感器参数 ${key}: ${rawValue}`, 'info');
+                    window.log(`跳过未知参数 ${key}: ${rawValue}`, 'info');
                 }
                 continue;
             }
 
             const sensorInfo = this.sensorMap[key];
-            labelArray.push(`${sensorInfo.name} (${sensorInfo.unit})`);
+            const displayName = `${sensorInfo.name} (${sensorInfo.unit})`;
+            labelArray.push(displayName);
+            
+            console.log(`处理 ${key}: ${rawValue} → ${displayName}`);
             
             let value = null;
             
-            // 错误码处理
-            if (rawValue === 'O.00' || rawValue === 'O.0' || rawValue === 'O' || 
-                rawValue === '2000001' || rawValue === '2000003') {
+            // 统一错误码判断（字母O或数字0）
+            const errorPattern = /^(O\.?0*|0\.?0*|2000001|2000003|ERROR)$/i;
+            if (errorPattern.test(rawValue)) {
                 value = null;
                 if (window.log) {
-                    window.log(`${sensorInfo.name}: 传感器离线/错误`, 'error');
+                    window.log(`${displayName}: 传感器离线/错误`, 'error');
                 }
             } else {
-                // 正常数值转换
+                // 解析数值
                 const numValue = parseFloat(rawValue);
                 if (isNaN(numValue)) {
+                    console.error(`无效数值: ${rawValue}`);
                     value = null;
                 } else {
+                    // 应用转换因子
                     value = numValue / sensorInfo.factor;
+                    console.log(`转换后: ${value}`);
                     if (window.log) {
-                        window.log(`${sensorInfo.name}: ${value.toFixed(3)} ${sensorInfo.unit}`, 'success');
+                        window.log(`${displayName}: ${value.toFixed(3)} ${sensorInfo.unit}`, 'success');
                     }
                 }
             }
@@ -244,6 +246,8 @@ class BluetoothManager {
             dataArray.push(value);
         }
 
+        console.log('转换完成:', { data: dataArray, labels: labelArray });
+        
         return {
             data: dataArray,
             labels: labelArray
@@ -306,7 +310,7 @@ class BluetoothManager {
     async getSensorData() {
         try {
             if (window.log) {
-                window.log('正在获取传感器数据（文档标准版）...', 'info');
+                window.log('正在获取传感器数据（文档标准映射）...', 'info');
             }
             
             const result = await this.sendATCommand('MEA=?');
