@@ -9,7 +9,7 @@ class BluetoothManager {
         this.dataCache = '';
         this.resolveCallback = null;
         
-        // ✅ Seeed文档标准参数映射（新版）
+        // ✅ Seeed文档标准参数映射（含修正因子）
         this.sensorMap = {
             '4102': { name: '土壤湿度', unit: '%', factor: 1000, key: 'soil_moisture' },
             '4103': { name: '土壤温度', unit: '℃', factor: 1000, key: 'soil_temperature' },
@@ -91,7 +91,7 @@ class BluetoothManager {
     }
 
     /**
-     * 处理蓝牙数据返回
+     * 处理蓝牙数据返回（超强纠错版）
      */
     handleData(event) {
         const value = event.target.value;
@@ -110,34 +110,36 @@ class BluetoothManager {
         if (completeFlag.test(this.dataCache)) {
             console.log('收到完整响应，原始数据:', this.dataCache);
             
-            // 🔧 强力提取和修复
-            let jsonStr = this.dataCache.replace(/\r\nok\r\n/g, '').trim();
-            console.log('清理后字符串:', jsonStr);
+            // 🔥 提取第一个完整的JSON对象
+            const jsonMatches = this.dataCache.match(/\{.*?\}(?=\r\nok\r\n)/gs);
             
-            if (jsonStr.startsWith('{') && jsonStr.endsWith('}')) {
+            if (jsonMatches && jsonMatches.length > 0) {
+                const firstJsonStr = jsonMatches[0];
+                console.log('提取第一个JSON:', firstJsonStr);
+                
                 try {
-                    // 先尝试直接解析
-                    const jsonData = JSON.parse(jsonStr);
+                    const jsonData = JSON.parse(firstJsonStr);
                     console.log('JSON解析成功:', jsonData);
                     if (this.resolveCallback) {
                         this.resolveCallback(jsonData);
                     }
                 } catch (e) {
-                    console.log('JSON解析失败，尝试修复');
-                    this.parseWithRecovery(jsonStr);
+                    console.log('JSON解析失败，尝试恢复解析');
+                    this.parseWithRecovery(firstJsonStr);
                 }
             } else {
-                console.log('不是有效的JSON格式，尝试修复');
-                this.parseWithRecovery(jsonStr);
+                console.log('未提取到JSON，尝试文本解析');
+                const cleanText = this.dataCache.replace(/\r\nok\r\n/g, '').trim();
+                this.parseWithRecovery(cleanText);
             }
             
-            this.dataCache = '';
+            this.dataCache = ''; // 立即清空缓存
             this.resolveCallback = null;
         }
     }
 
     /**
-     * 恢复解析器（修复版）
+     * 恢复解析器（最终版）
      */
     parseWithRecovery(malformedJson) {
         console.log('开始恢复解析:', malformedJson);
@@ -147,22 +149,29 @@ class BluetoothManager {
         }
         
         try {
-            // 步骤1：确保引号正确
-            let fixed = malformedJson.replace(/'/g, '"');
+            // 步骤1：确保是有效JSON格式
+            if (!malformedJson.startsWith('{') || !malformedJson.endsWith('}')) {
+                malformedJson = `{${malformedJson}}`;
+            }
             
-            // 步骤2：给所有key加引号
-            fixed = fixed.replace(/([{,]\s*)([a-zA-Z0-9]+)(\s*:)/g, '$1"$2"$3');
+            // 步骤2：修复键名（加引号）
+            let fixed = malformedJson.replace(/([{,]\s*)([a-zA-Z0-9]+)(\s*:)/g, '$1"$2"$3');
             
-            // 步骤3：处理O错误码
-            fixed = fixed.replace(/:\s*"*(O\.?\d*)"*/g, ':"ERROR"');
+            // 步骤3：修复值（确保是字符串）
+            fixed = fixed.replace(/:\s*([A-Za-z]+[A-Za-z0-9.]*)/g, ': "$1"');
+            fixed = fixed.replace(/:\s*(\d+\.?\d*)\s*([,}])/g, ': "$1"$2');
             
-            // 步骤4：确保数值有引号（JSON.parse可以处理字符串数值）
-            fixed = fixed.replace(/:\s*(\d+\.?\d*)\s*([,}])/g, ':"$1"$2');
+            // 步骤4：处理O错误码
+            fixed = fixed.replace(/:\s*"O\.?\d*"/gi, ':"ERROR"');
             
-            console.log('修复后的JSON:', fixed);
+            console.log('修复后的JSON字符串:', fixed);
+            
+            if (window.log) {
+                window.log(`修复后JSON: ${fixed}`, 'info');
+            }
             
             const dataObject = JSON.parse(fixed);
-            console.log('修复解析成功:', dataObject);
+            console.log('JSON解析成功:', dataObject);
             
             const converted = this.convertToStandardStructure(dataObject);
             
@@ -173,16 +182,16 @@ class BluetoothManager {
         } catch (error) {
             console.error('恢复解析失败:', error);
             if (window.log) {
-                window.log(`恢复解析失败: ${error.message}`, 'error');
+                window.log(`恢复解析失败: ${error.message}。原始数据: "${malformedJson}"`, 'error');
             }
             if (this.resolveCallback) {
-                this.resolveCallback(null, error);
+                this.resolveCallback(null, new Error(`数据修复失败：${error.message}`));
             }
         }
     }
 
     /**
-     * 转换为标准结构（核心函数）
+     * 转换为标准结构（带验证）
      */
     convertToStandardStructure(rawData) {
         console.log('开始转换结构，原始数据:', rawData);
@@ -190,44 +199,47 @@ class BluetoothManager {
         const dataArray = [];
         const labelArray = [];
         
-        // 📊 遍历原始数据的键值对
+        // 验证输入
+        if (!rawData || typeof rawData !== 'object') {
+            throw new Error('无效的数据对象');
+        }
+        
+        // 遍历对象
         for (const [key, value] of Object.entries(rawData)) {
             console.log(`处理键值对: ${key} = ${value}`);
             
-            // ✅ 验证key是否为有效参数标识符
+            // 验证key
             const sensorInfo = this.sensorMap[key];
             
             if (!sensorInfo) {
-                console.warn(`⚠️ 未知参数标识符 ${key}: ${value}（跳过）`);
+                console.warn(`未知参数标识符 ${key}: ${value}`);
                 if (window.log) {
-                    window.log(`未知参数 ${key}: ${value}`, 'info');
+                    window.log(`未知传感器参数 ${key}: ${value}`, 'info');
                 }
-                continue; // 跳过未知参数
+                continue;
             }
             
-            // 构建显示标签（含单位）
             const label = `${sensorInfo.name} (${sensorInfo.unit})`;
             labelArray.push(label);
             
-            // 转换数值
             let numericValue = null;
             
-            // 错误判断（多模式）
-            const errorCodes = ['ERROR', 'O.00', 'O.0', 'O', '2000001', '2000003', '0.00'];
+            // 统一错误判断
+            const errorCodes = ['ERROR', 'O.00', 'O.0', 'O', '2000001', '2000003', '0.00', ''];
             if (value === null || errorCodes.includes(value)) {
                 numericValue = null;
                 if (window.log) {
                     window.log(`❌ ${label}: 传感器离线/错误`, 'error');
                 }
             } else {
-                // 📈 转换为数值并应用因子
-                const rawNum = parseFloat(value);
-                if (isNaN(rawNum)) {
+                // 转换数值
+                const numValue = parseFloat(value);
+                if (isNaN(numValue)) {
                     console.error(`无效数值: ${value}`);
                     numericValue = null;
                 } else {
-                    numericValue = rawNum / sensorInfo.factor;
-                    console.log(`✅ ${label}: ${numericValue.toFixed(3)} ${sensorInfo.unit}`);
+                    numericValue = numValue / sensorInfo.factor;
+                    console.log(`✅ 转换结果: ${numericValue}`);
                     if (window.log) {
                         window.log(`${label}: ${numericValue.toFixed(3)} ${sensorInfo.unit}`, 'success');
                     }
@@ -235,6 +247,11 @@ class BluetoothManager {
             }
             
             dataArray.push(numericValue);
+        }
+
+        // 验证结果
+        if (dataArray.length === 0) {
+            throw new Error('未找到任何有效的传感器数据');
         }
         
         const result = { data: dataArray, labels: labelArray };
@@ -293,12 +310,12 @@ class BluetoothManager {
     }
 
     /**
-     * 获取传感器数据（文档标准版）
+     * 获取传感器数据（最终版）
      */
     async getSensorData() {
         try {
             if (window.log) {
-                window.log('正在获取传感器数据（文档标准映射）...', 'info');
+                window.log('正在获取传感器数据（终极修复版）...', 'info');
             }
             
             const result = await this.sendATCommand('MEA=?');
@@ -326,13 +343,6 @@ class BluetoothManager {
      */
     async getDeviceInfo() {
         return await this.sendATCommand('INFO=?');
-    }
-
-    /**
-     * 获取传感器列表
-     */
-    async getSensorList() {
-        return await this.sendATCommand('SENSOR=?');
     }
 }
 
